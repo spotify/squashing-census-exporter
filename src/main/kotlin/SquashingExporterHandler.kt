@@ -36,11 +36,10 @@ const val SQUASH_THRESHOLD = 100
 // TODO: remove children of squashed spans
 
 class SquashingExporterHandler(private val delegate: SpanExporter.Handler): SpanExporter.Handler() {
-
     override fun export(spanDataList: MutableCollection<SpanData>) {
+        val spans = spanDataList.toList()
         GlobalScope.launch {
-            val squashed = spanDataList
-                .toList()
+            val squashed = spans
                 .groupBy { it.context.traceId!! }
                 .values
                 .flatMap(::squashTrace)
@@ -69,7 +68,7 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
             .maxBy { it.endTimestamp as Timestamp }
             ?.endTimestamp
 
-        val attributes = span.attributes.attributeMap
+        val attributes = span.attributes.attributeMap.toMutableMap()
         attributes.putAll(mapOf(
             "trace.squashed" to booleanAttributeValue(true),
             "trace.squash_count" to doubleAttributeValue(spanData.size.toDouble())

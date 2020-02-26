@@ -39,4 +39,11 @@ open class SquashingTraceExporter(delegate: SpanExporter.Handler) {
     fun unregister() {
         Tracing.getExportComponent().spanExporter.unregisterHandler(registerName)
     }
+
+    companion object {
+        @JvmStatic
+        fun createAndRegister(delegate: SpanExporter.Handler): SquashingTraceExporter {
+            return SquashingTraceExporter(delegate)
+        }
+    }
 }
