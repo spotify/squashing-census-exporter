@@ -51,16 +51,15 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
     fun squashTrace(trace: List<SpanData>): List<SpanData> {
         val squashed = trace.groupBy { Pair(it.name, it.parentSpanId) }
             .values
-            .fold(mutableListOf<SpanData>() to mutableListOf<SpanId>(), { acc, spanData ->
+            .fold(mutableListOf<SpanData>() to mutableListOf<SpanId>(), { (acc, dropped), spanData ->
                 if (spanData.size < SQUASH_THRESHOLD) {
-                    acc.first.addAll(spanData)
+                    acc.addAll(spanData)
                 } else {
                     val squashed = squashedSpan(spanData)
-                    acc.first.add(squashed)
-                    val dropped = spanData.map { it.context.spanId }
-                    acc.second.addAll(dropped)
+                    acc.add(squashed)
+                    dropped.addAll(spanData.map { it.context.spanId })
                 }
-                acc
+                acc to dropped
             })
 
         // Remove all children of dropped spans
