@@ -23,17 +23,17 @@ package com.spotify.tracing
 
 import io.opencensus.common.Timestamp
 import io.opencensus.trace.AttributeValue.*
+import io.opencensus.trace.SpanId
 import io.opencensus.trace.export.SpanData
 import io.opencensus.trace.export.SpanExporter
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlin.streams.toList
 
 
 // TODO: make this configurable
 const val SQUASH_THRESHOLD = 100
 // TODO: add span name and parent span name filtering
-
-// TODO: remove children of squashed spans
 
 class SquashingExporterHandler(private val delegate: SpanExporter.Handler): SpanExporter.Handler() {
     override fun export(spanDataList: MutableCollection<SpanData>) {
@@ -49,16 +49,25 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
     }
 
     fun squashTrace(trace: List<SpanData>): List<SpanData> {
-        return trace.groupBy { Pair(it.name, it.parentSpanId) }
+        val squashed = trace.groupBy { Pair(it.name, it.parentSpanId) }
             .values
-            .fold(mutableListOf<SpanData>(), { acc, spanData ->
+            .fold(mutableListOf<SpanData>() to mutableListOf<SpanId>(), { acc, spanData ->
                 if (spanData.size < SQUASH_THRESHOLD) {
-                    acc.addAll(spanData)
+                    acc.first.addAll(spanData)
                 } else {
-                    acc.add(squashedSpan(spanData))
+                    val squashed = squashedSpan(spanData)
+                    acc.first.add(squashed)
+                    val dropped = spanData.stream()
+                        .filter { it.parentSpanId != squashed.context.spanId }
+                        .map { it.context.spanId }
+                        .toList()
+                    acc.second.addAll(dropped)
                 }
                 acc
             })
+
+        // Remove all children of dropped spans
+        return dropChildren(squashed.first, squashed.second)
     }
 
     fun squashedSpan(spanData: List<SpanData>): SpanData {
@@ -89,5 +98,17 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
             span.status,
             endTime
         )
+    }
+
+    fun dropChildren(spanData: List<SpanData>, droppedParents: List<SpanId>): List<SpanData> {
+        val grouped = spanData.groupBy { it.parentSpanId in droppedParents }
+        val dropped = grouped[true]?.map { it.context.spanId }
+
+        val kept = grouped[false] ?: listOf()
+        return if (dropped == null) {
+            kept
+        } else {
+            dropChildren(kept, dropped)
+        }
     }
 }
