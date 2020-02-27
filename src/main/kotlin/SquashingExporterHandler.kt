@@ -49,7 +49,7 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
     }
 
     fun squashTrace(trace: List<SpanData>): List<SpanData> {
-        val squashed = trace.groupBy { Pair(it.name, it.parentSpanId) }
+        val squashed = trace.groupBy { it.parentSpanId to Pair(it.name, it.status) }
             .values
             .fold(mutableListOf<SpanData>() to mutableListOf<SpanId>(), { (acc, dropped), spanData ->
                 if (spanData.size < SQUASH_THRESHOLD) {
