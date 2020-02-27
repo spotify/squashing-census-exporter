@@ -57,10 +57,7 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
                 } else {
                     val squashed = squashedSpan(spanData)
                     acc.first.add(squashed)
-                    val dropped = spanData.stream()
-                        .filter { it.parentSpanId != squashed.context.spanId }
-                        .map { it.context.spanId }
-                        .toList()
+                    val dropped = spanData.map { it.context.spanId }
                     acc.second.addAll(dropped)
                 }
                 acc
