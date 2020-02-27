@@ -22,22 +22,28 @@
 package com.spotify.tracing
 
 import io.opencensus.common.Timestamp
-import io.opencensus.trace.AttributeValue.*
+import io.opencensus.trace.AttributeValue.booleanAttributeValue
+import io.opencensus.trace.AttributeValue.doubleAttributeValue
 import io.opencensus.trace.SpanId
 import io.opencensus.trace.export.SpanData
 import io.opencensus.trace.export.SpanExporter
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import kotlin.streams.toList
 
 
-// TODO: make this configurable
-const val SQUASH_THRESHOLD = 100
-// TODO: add span name and parent span name filtering
-
-class SquashingExporterHandler(private val delegate: SpanExporter.Handler): SpanExporter.Handler() {
+class SquashingExporterHandler(
+    private val delegate: SpanExporter.Handler,
+    private val threshold: Int,
+    private val whitelist: List<String>? = null
+): SpanExporter.Handler() {
     override fun export(spanDataList: MutableCollection<SpanData>) {
+        if (whitelist?.isEmpty() == true) {
+            // An empty non-null whitelist means nothing will be squashed, so just immediately forward all spans.
+            return delegate.export(spanDataList)
+        }
+
         val spans = spanDataList.toList()
+
         GlobalScope.launch {
             val squashed = spans
                 .groupBy { it.context.traceId!! }
@@ -52,10 +58,13 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
         val squashed = trace.groupBy { it.parentSpanId to Pair(it.name, it.status) }
             .values
             .fold(mutableListOf<SpanData>() to mutableListOf<SpanId>(), { (acc, dropped), spanData ->
-                if (spanData.size < SQUASH_THRESHOLD) {
+                val spanName: String = spanData.first().name
+                val skipSquash = whitelist != null && !whitelist.contains(spanName)
+
+                if (skipSquash || spanData.size < threshold) {
                     acc.addAll(spanData)
                 } else {
-                    val squashed = squashedSpan(spanData)
+                    val squashed = squashSpan(spanData)
                     acc.add(squashed)
                     dropped.addAll(spanData.map { it.context.spanId })
                 }
@@ -66,7 +75,7 @@ class SquashingExporterHandler(private val delegate: SpanExporter.Handler): Span
         return dropChildren(squashed.first, squashed.second)
     }
 
-    fun squashedSpan(spanData: List<SpanData>): SpanData {
+    fun squashSpan(spanData: List<SpanData>): SpanData {
         val span = spanData.minBy { it.startTimestamp }!!
         val endTime = spanData
             .filterNot { it.endTimestamp == null }

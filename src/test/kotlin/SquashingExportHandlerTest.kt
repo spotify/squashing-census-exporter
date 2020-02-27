@@ -23,9 +23,11 @@ package com.spotify.tracing
 
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import io.opencensus.common.Timestamp
 import io.opencensus.trace.SpanId
 import io.opencensus.trace.export.SpanData
+import io.opencensus.trace.export.SpanExporter
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -39,7 +41,7 @@ class SquashingExportHandlerTest {
 
     @BeforeEach
     fun setup() {
-        handler = SquashingExporterHandler(mockk())
+        handler = SquashingExporterHandler(mockk(), 10)
 
         rootSpan = mockk(relaxed = true) {
             every { name } returns "Recv.test"
@@ -48,7 +50,7 @@ class SquashingExportHandlerTest {
 
         val parentId = SpanId.generateRandomId(Random())
 
-        val endTimes = (1..100).map {
+        val endTimes = (1..10).map {
             Timestamp.create(315576000 + it.toLong(), 0)
         }
 
@@ -60,7 +62,7 @@ class SquashingExportHandlerTest {
         }
 
         dupeSpans = mutableListOf()
-        repeat(100) { dupeSpans.add(dupeSpan) }
+        repeat(10) { dupeSpans.add(dupeSpan) }
     }
 
     @Test
@@ -68,7 +70,7 @@ class SquashingExportHandlerTest {
         val spans = dupeSpans.drop(1).plus(rootSpan)
 
         val squashed = handler.squashTrace(spans)
-        assertEquals(100, squashed.size)
+        assertEquals(10, squashed.size)
     }
 
     @Test
@@ -79,6 +81,34 @@ class SquashingExportHandlerTest {
         assertEquals(2, squashed.size)
         val span = squashed.first { it != rootSpan }
         assertEquals(315576000, span.startTimestamp.seconds)
-        assertEquals(315576100, span.endTimestamp?.seconds)
+        assertEquals(315576010, span.endTimestamp?.seconds)
+    }
+
+    @Test
+    fun `Empty whitelist does not squash spans`() {
+        val delegate: SpanExporter.Handler = mockk(relaxed = true)
+        val handler = SquashingExporterHandler(delegate, 2, emptyList())
+        val spans = dupeSpans.plus(rootSpan).toMutableList()
+
+        handler.export(spans)
+        verify { delegate.export(spans) }
+    }
+
+    @Test
+    fun `Whitelisted spans are squashed`() {
+        val handler = SquashingExporterHandler(mockk(), 2, listOf(dupeSpan.name))
+        val spans = dupeSpans.plus(rootSpan).toMutableList()
+
+        val squashed = handler.squashTrace(spans)
+        assertEquals(2, squashed.size)
+    }
+
+    @Test
+    fun `Non-whitelisted spans are not squashed`() {
+        val handler = SquashingExporterHandler(mockk(), 2, listOf("not.a.squashable.span"))
+        val spans = dupeSpans.plus(rootSpan).toMutableList()
+
+        val squashed = handler.squashTrace(spans)
+        assertEquals(11, squashed.size)
     }
 }

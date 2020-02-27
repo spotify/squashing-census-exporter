@@ -28,11 +28,11 @@ import io.opencensus.trace.export.SpanExporter
  * Helper class to create and register the squashing trace exporter handler.
  * The name of the exporter will be set from the delegate handler.
  */
-open class SquashingTraceExporter(delegate: SpanExporter.Handler) {
+open class SquashingTraceExporter(delegate: SpanExporter.Handler, threshold: Int, whitelist: List<String>?) {
     private val registerName: String = delegate::class.java.name
 
     init {
-        val handler = SquashingExporterHandler(delegate)
+        val handler = SquashingExporterHandler(delegate, threshold, whitelist)
         Tracing.getExportComponent().spanExporter.registerHandler(registerName, handler)
     }
 
@@ -41,9 +41,19 @@ open class SquashingTraceExporter(delegate: SpanExporter.Handler) {
     }
 
     companion object {
+        /**
+         * Helper method to create a SquashingTraceExporter.
+         * @param delegate The {@link SpanExporter.Handler} to export spans to after squashing.
+         * @param threshold The number of duplicate spans to detect in a trace before squashing.
+         * @param whitelist A list of span operation names to explicitly true to squash. If this is `null` then all
+         * spans can potentially be squashed.
+         */
         @JvmStatic
-        fun createAndRegister(delegate: SpanExporter.Handler): SquashingTraceExporter {
-            return SquashingTraceExporter(delegate)
+        @JvmOverloads
+        fun createAndRegister(
+            delegate: SpanExporter.Handler, threshold: Int = 50, whitelist: List<String>? = null
+        ): SquashingTraceExporter {
+            return SquashingTraceExporter(delegate, threshold, whitelist)
         }
     }
 }
