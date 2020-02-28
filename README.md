@@ -1,6 +1,7 @@
-[![Apache-2.0 license](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-
 # Squashing OpenCensus Trace Exporter
+
+[![Build Status](https://circleci.com/gh/spotify/squashing-census-exporter.svg?style=svg)](https://circleci.com/gh/spotify/squashing-census-exporter)
+[![Apache-2.0 license](https://img.shields.io/github/license/spotify/squashing-census-exporter.svg)](LICENSE)
 
 The Squashing OpenCensus Trace Exporter is a trace exporter that tries to squash together repetitive spans. It was created to help reduce the amount of noise for very large traces. For example, complex queries in the [Heroic TSDB](https://spotify.github.io/heroic/) can sometimes create thousands or tens of thousands of spans. While this is fine from an instrumentation perspective, this volume of spans can be hard to use in most tracing UIs.
 

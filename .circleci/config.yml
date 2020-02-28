@@ -1,0 +1,17 @@
+version: 2.1
+
+orbs:
+  gradle: circleci/gradle@2.0.0
+
+executors:
+  java11:
+    docker:
+      - image: cimg/openjdk:11.0
+
+workflows:
+  build_and_test:
+    jobs:
+      - gradle/test:
+          reports_path: build/reports/
+          test_results_path: build/test-results/
+          executor: java11
