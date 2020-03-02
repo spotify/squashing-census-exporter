@@ -2,6 +2,8 @@ plugins {
     id 'org.jetbrains.kotlin.jvm' version '1.3.61'
     id 'maven-publish'
     id 'signing'
+    id 'de.marcphilipp.nexus-publish' version '0.3.0'
+    id 'io.codearte.nexus-staging' version '0.21.2'
 }
 
 group 'com.spotify.tracing'
@@ -50,8 +52,6 @@ task sourceJar(type: Jar) {
 
 // Everything below is for publishing the JAR
 
-ext.isReleaseBuild = !version.endsWith('SNAPSHOT')
-
 artifacts {
     archives jar
     archives javadocJar
@@ -59,8 +59,10 @@ artifacts {
 }
 
 signing {
-    required { isReleaseBuild }
-    if (isReleaseBuild && project.hasProperty('signing.keyId')) {
+    // Ignore signing requirement if we aren't publishing. Without this check,
+    // gpg signatures would be required for every build.
+    required { gradle.taskGraph.hasTask(tasks.publish) }
+    if (project.hasProperty('signing.gnupg.keyName')) {
         useGpgCmd()
     }
     sign configurations.archives
@@ -75,16 +77,14 @@ publishing {
             artifact tasks.sourceJar
             artifact tasks.javadocJar
 
-            if (isReleaseBuild) {
-                // Create the signed pom artifact
-                pom.withXml {
-                    def pomFile = file("${project.buildDir}/generated-pom.xml")
-                    writeTo(pomFile)
-                    def pomAscFile = signing.sign(pomFile).signatureFiles[0]
-                    artifact(pomAscFile) {
-                        classifier = null
-                        extension = 'pom.asc'
-                    }
+            // Create the signed pom artifact
+            pom.withXml {
+                def pomFile = file("${project.buildDir}/generated-pom.xml")
+                writeTo(pomFile)
+                def pomAscFile = signing.sign(pomFile).signatureFiles[0]
+                artifact(pomAscFile) {
+                    classifier = null
+                    extension = 'pom.asc'
                 }
             }
 
@@ -99,22 +99,6 @@ publishing {
                     }
                     extension = 'jar.asc'
                 }
-            }
-        }
-    }
-
-    repositories {
-        maven {
-            name = "sonatype"
-
-            def releasesUrl = "https://oss.sonatype.org/service/local/staging/deploy/maven2/"
-            def snapshotsUrl = "https://oss.sonatype.org/content/repositories/snapshots/"
-            url = isReleaseBuild ? releasesUrl : snapshotsUrl
-
-
-            credentials {
-                username findProperty('sonatypeUsername')
-                password findProperty('sonatypePassword')
             }
         }
     }
@@ -160,6 +144,24 @@ def customizePom(pom) {
     }
 }
 
+nexusStaging {
+    packageGroup = 'com.spotify'
+    username = findProperty('sonatypeUsername')
+    password = findProperty('sonatypePassword')
+
+    numberOfRetries = 30
+    delayBetweenRetriesInMillis = 5000
+}
+
+nexusPublishing {
+    repositories {
+        nexus {
+            packageGroup = 'com.spotify'
+            nexusUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
+            snapshotRepositoryUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
+        }
+    }
+}
 
 model {
     tasks.generatePomFileForMavenPublication {
@@ -168,7 +170,10 @@ model {
     tasks.publishMavenPublicationToMavenLocal {
         dependsOn project.tasks.signArchives
     }
-    tasks.publishMavenPublicationToSonatypeRepository {
+    tasks.publishMavenPublicationToNexusRepository {
+        dependsOn project.tasks.signArchives
+    }
+    tasks.publishToNexus {
         dependsOn project.tasks.signArchives
     }
 }
