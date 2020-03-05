@@ -21,21 +21,35 @@
 
 package com.spotify.tracing
 
+import com.github.benmanes.caffeine.cache.Caffeine
+import com.github.benmanes.caffeine.cache.RemovalCause
 import io.opencensus.common.Timestamp
 import io.opencensus.trace.AttributeValue.booleanAttributeValue
 import io.opencensus.trace.AttributeValue.doubleAttributeValue
 import io.opencensus.trace.SpanId
+import io.opencensus.trace.TraceId
 import io.opencensus.trace.export.SpanData
 import io.opencensus.trace.export.SpanExporter
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-
+import java.util.concurrent.TimeUnit
 
 class SquashingExporterHandler(
     private val delegate: SpanExporter.Handler,
     private val threshold: Int,
     private val whitelist: List<String>? = null
 ): SpanExporter.Handler() {
+    val cache = Caffeine.newBuilder()
+        .weakKeys()
+        .maximumSize(1_000)
+        .expireAfterAccess(2, TimeUnit.MINUTES)
+        .removalListener { traceId: TraceId?, spans: MutableList<SpanData>?, cause ->
+            if (cause == RemovalCause.EXPIRED || cause == RemovalCause.COLLECTED || cause == RemovalCause.SIZE) {
+                delegate.export(spans)
+            }
+        }
+        .build<TraceId, MutableList<SpanData>>()
+
     override fun export(spanDataList: MutableCollection<SpanData>) {
         if (whitelist?.isEmpty() == true) {
             // An empty non-null whitelist means nothing will be squashed, so just immediately forward all spans.
@@ -45,12 +59,25 @@ class SquashingExporterHandler(
         val spans = spanDataList.toList()
 
         GlobalScope.launch {
-            val squashed = spans
+            spans
                 .groupBy { it.context.traceId!! }
                 .values
-                .flatMap(::squashTrace)
+                .forEach(::cacheOrExport)
+        }
+    }
 
+    fun cacheOrExport(newSpans: List<SpanData>) {
+        val traceId = newSpans.first().context.traceId
+        val spans = cache.getIfPresent(traceId) ?: mutableListOf()
+        spans.addAll(newSpans)
+
+        val rootSpan = newSpans.find { it.hasRemoteParent == true || it.parentSpanId == null }
+        if (rootSpan != null) {
+            cache.invalidate(traceId)
+            val squashed = squashTrace(spans)
             delegate.export(squashed)
+        } else {
+            cache.put(traceId, spans)
         }
     }
 
@@ -66,7 +93,11 @@ class SquashingExporterHandler(
                 } else {
                     val squashed = squashSpan(spanData)
                     acc.add(squashed)
-                    dropped.addAll(spanData.map { it.context.spanId })
+                    spanData
+                        .stream()
+                        .filter { it.context.spanId != squashed.context.spanId }
+                        .map { it.context.spanId }
+                        .forEach { dropped.add(it) }
                 }
                 acc to dropped
             })

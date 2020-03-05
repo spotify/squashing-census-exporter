@@ -21,11 +21,12 @@
 
 package com.spotify.tracing
 
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.verify
+import io.mockk.*
 import io.opencensus.common.Timestamp
+import io.opencensus.trace.SpanContext
 import io.opencensus.trace.SpanId
+import io.opencensus.trace.Status
+import io.opencensus.trace.TraceId
 import io.opencensus.trace.export.SpanData
 import io.opencensus.trace.export.SpanExporter
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -34,35 +35,52 @@ import org.junit.jupiter.api.Test
 import java.util.*
 
 class SquashingExportHandlerTest {
+    lateinit var delegate: SpanExporter.Handler
+    lateinit var exportedSpans: CapturingSlot<List<SpanData>>
     lateinit var handler: SquashingExporterHandler
+    lateinit var mockTraceId: TraceId
     lateinit var rootSpan: SpanData
-    lateinit var dupeSpan: SpanData
+    lateinit var parentId: SpanId
     lateinit var dupeSpans: MutableList<SpanData>
 
     @BeforeEach
     fun setup() {
-        handler = SquashingExporterHandler(mockk(), 10)
+        exportedSpans = slot<List<SpanData>>()
+        delegate = mockk(relaxed = true) {
+            every { export(capture(exportedSpans)) } just Runs
+        }
+        handler = SquashingExporterHandler(delegate, 10)
 
+        val random = Random()
+        mockTraceId = TraceId.generateRandomId(random)
+        parentId = SpanId.generateRandomId(random)
+
+        val rootContext: SpanContext = mockk {
+            every { spanId } returns parentId
+            every { traceId } returns mockTraceId
+        }
         rootSpan = mockk(relaxed = true) {
             every { name } returns "Recv.test"
             every { parentSpanId } returns null
-        }
-
-        val parentId = SpanId.generateRandomId(Random())
-
-        val endTimes = (1..10).map {
-            Timestamp.create(315576000 + it.toLong(), 0)
-        }
-
-        dupeSpan = mockk(relaxed = true) {
-            every { name } returns "test"
-            every { parentSpanId } returns parentId
-            every { startTimestamp } returns Timestamp.create(315576000, 0)
-            every { endTimestamp } returnsMany endTimes
+            every { context } returns rootContext
         }
 
         dupeSpans = mutableListOf()
-        repeat(10) { dupeSpans.add(dupeSpan) }
+        repeat(10) {
+            val spanContext: SpanContext = mockk {
+                every { spanId } returns SpanId.generateRandomId(random)
+                every { traceId } returns mockTraceId
+            }
+            val span: SpanData = mockk(relaxed = true) {
+                every { name } returns "test"
+                every { parentSpanId } returns parentId
+                every { startTimestamp } returns Timestamp.create(315576000 + it.toLong(), 0)
+                every { endTimestamp } returns Timestamp.create(315576000 + it.toLong(), 0)
+                every { context } returns spanContext
+                every { status } returns Status.OK
+            }
+            dupeSpans.add(span)
+        }
     }
 
     @Test
@@ -81,12 +99,11 @@ class SquashingExportHandlerTest {
         assertEquals(2, squashed.size)
         val span = squashed.first { it != rootSpan }
         assertEquals(315576000, span.startTimestamp.seconds)
-        assertEquals(315576010, span.endTimestamp?.seconds)
+        assertEquals(315576009, span.endTimestamp?.seconds)
     }
 
     @Test
     fun `Empty whitelist does not squash spans`() {
-        val delegate: SpanExporter.Handler = mockk(relaxed = true)
         val handler = SquashingExporterHandler(delegate, 2, emptyList())
         val spans = dupeSpans.plus(rootSpan).toMutableList()
 
@@ -96,7 +113,7 @@ class SquashingExportHandlerTest {
 
     @Test
     fun `Whitelisted spans are squashed`() {
-        val handler = SquashingExporterHandler(mockk(), 2, listOf(dupeSpan.name))
+        val handler = SquashingExporterHandler(mockk(), 2, listOf("test"))
         val spans = dupeSpans.plus(rootSpan).toMutableList()
 
         val squashed = handler.squashTrace(spans)
@@ -110,5 +127,16 @@ class SquashingExportHandlerTest {
 
         val squashed = handler.squashTrace(spans)
         assertEquals(11, squashed.size)
+    }
+
+    @Test
+    fun `Cached spans get squashed and exported`() {
+        val spans = dupeSpans.toList()
+        handler.cacheOrExport(spans)
+        assertEquals(10, handler.cache.getIfPresent(mockTraceId)?.count())
+
+        handler.cacheOrExport(listOf(rootSpan))
+        verify(exactly = 1) { delegate.export(any()) }
+        assertEquals(2, exportedSpans.captured.count())
     }
 }
