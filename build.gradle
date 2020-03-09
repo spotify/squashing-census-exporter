@@ -2,12 +2,11 @@ plugins {
     id 'org.jetbrains.kotlin.jvm' version '1.3.61'
     id 'maven-publish'
     id 'signing'
-    id 'de.marcphilipp.nexus-publish' version '0.3.0'
-    id 'io.codearte.nexus-staging' version '0.21.2'
+    id 'com.bmuschko.nexus' version '2.3.1'
 }
 
 group 'com.spotify.tracing'
-version = System.getenv('CIRCLE_TAG') ?: System.getenv('DOCKER_TAG') ?: '0.1.0-SNAPSHOT'
+version = System.getenv('CIRCLE_TAG') ?: System.getenv('DOCKER_TAG') ?: '0.1.0'
 
 repositories {
     mavenLocal()
@@ -39,141 +38,38 @@ test {
     useJUnitPlatform()
 }
 
-task javadocJar(type: Jar, dependsOn: javadoc) {
-    classifier = 'javadoc'
-    from javadoc
-}
-
-task sourceJar(type: Jar) {
-    classifier 'sources'
-    from sourceSets.main.allSource
-}
-
-
-// Everything below is for publishing the JAR
-
-artifacts {
-    archives jar
-    archives javadocJar
-    archives sourceJar
-}
-
 signing {
     // Ignore signing requirement if we aren't publishing. Without this check,
     // gpg signatures would be required for every build.
-    required { gradle.taskGraph.hasTask(tasks.publish) }
+    required { gradle.taskGraph.hasTask(tasks.uploadArchives) }
     if (project.hasProperty('signing.gnupg.keyName')) {
         useGpgCmd()
     }
-    sign configurations.archives
 }
 
-publishing {
-    publications {
-        maven(MavenPublication) {
-            customizePom(pom)
-
-            from components.java
-            artifact tasks.sourceJar
-            artifact tasks.javadocJar
-
-            // Create the signed pom artifact
-            pom.withXml {
-                def pomFile = file("${project.buildDir}/generated-pom.xml")
-                writeTo(pomFile)
-                def pomAscFile = signing.sign(pomFile).signatureFiles[0]
-                artifact(pomAscFile) {
-                    classifier = null
-                    extension = 'pom.asc'
-                }
-            }
-
-            // create the signed artifacts
-            project.tasks.signArchives.signatureFiles.each {
-                artifact(it) {
-                    def matcher = it.file =~ /-(sources|javadoc)\.jar\.asc$/
-                    if (matcher.find()) {
-                        classifier = matcher.group(1)
-                    } else {
-                        classifier = null
-                    }
-                    extension = 'jar.asc'
-                }
+modifyPom {
+    project {
+        description 'Squash similar spans in OpenCensus'
+        name 'Squashing OpenCensus Exporter'
+        url 'https://github.com/spotify/squashing-census-exporter'
+        licenses {
+            license {
+                name 'Apache License 2.0'
+                url 'https://github.com/spotify/squashing-census-exporter/blob/master/LICENSE'
+                distribution 'repo'
             }
         }
-    }
-}
-
-
-def customizePom(pom) {
-    pom.withXml {
-        def root = asNode()
-
-        // eliminate test-scoped dependencies (no need in maven central POMs)
-        root.dependencies.removeAll { dep ->
-            dep.scope == "test"
-        }
-
-        // add all items necessary for maven central publication
-        root.children().last() + {
-            resolveStrategy = Closure.DELEGATE_FIRST
-
-            description 'Squash similar spans in OpenCensus'
-            name 'Squashing OpenCensus Exporter'
+        scm {
             url 'https://github.com/spotify/squashing-census-exporter'
-            licenses {
-                license {
-                    name 'Apache License 2.0'
-                    url 'https://github.com/spotify/squashing-census-exporter/blob/master/LICENSE'
-                    distribution 'repo'
-                }
-            }
-            scm {
-                url 'https://github.com/spotify/squashing-census-exporter'
-                connection 'scm:git:git://github.com/spotify/squashing-census-exporter.git'
-                developerConnection 'scm:git:ssh://git@github.com:spotify/squashing-census-exporter.git'
-            }
-            developers {
-                developer {
-                    id 'prism'
-                    name 'prism'
-                    email 'prism@spotify.com'
-                }
+            connection 'scm:git:git://github.com/spotify/squashing-census-exporter.git'
+            developerConnection 'scm:git:ssh://git@github.com:spotify/squashing-census-exporter.git'
+        }
+        developers {
+            developer {
+                id 'prism'
+                name 'prism'
+                email 'prism@spotify.com'
             }
         }
-    }
-}
-
-nexusStaging {
-    packageGroup = 'com.spotify'
-    username = findProperty('sonatypeUsername')
-    password = findProperty('sonatypePassword')
-
-    numberOfRetries = 30
-    delayBetweenRetriesInMillis = 5000
-}
-
-nexusPublishing {
-    repositories {
-        nexus {
-            packageGroup = 'com.spotify'
-            nexusUrl = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-            snapshotRepositoryUrl = uri("https://oss.sonatype.org/content/repositories/snapshots/")
-        }
-    }
-}
-
-model {
-    tasks.generatePomFileForMavenPublication {
-        destination = file("$buildDir/generated-pom.xml")
-    }
-    tasks.publishMavenPublicationToMavenLocal {
-        dependsOn project.tasks.signArchives
-    }
-    tasks.publishMavenPublicationToNexusRepository {
-        dependsOn project.tasks.signArchives
-    }
-    tasks.publishToNexus {
-        dependsOn project.tasks.signArchives
     }
 }
