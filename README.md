@@ -28,7 +28,7 @@ Add the exporter to your build.gradle
 
 ```groovy
 dependencies {
-    implementation "com.spotify.tracing:squashing-trace-exporter:VERSION"
+    implementation "com.spotify.tracing:squashing-census-exporter:VERSION"
 }
 ```
 
